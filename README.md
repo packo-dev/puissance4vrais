@@ -1,6 +1,6 @@
 # 🎮 Puissance 4 (Connect 4)
-
-Un jeu de Puissance 4 développé avec Go, HTML, CSS et JavaScript.
+coucou mes petits poulet voici 
+Un jeu de Puissance 4 développé par moiiiiiiiiiiiii ethan 
 
 ## Fonctionnalités
 
