@@ -138,6 +138,7 @@ func handleMove(w http.ResponseWriter, r *http.Request) {
 		
 		// If AI mode and player 2's turn, make AI move
 		if currentGame.Mode == "ai" && currentGame.CurrentPlayer == 2 && !currentGame.GameOver {
+			time.Sleep(600 * time.Millisecond) // Pause de 600ms avant que l'IA joue
 			aiMakeMove()
 		}
 		currentGame.StatusMessage = ""
