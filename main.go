@@ -10,192 +10,217 @@ import (
 	"time"
 )
 
-// Initialize random seed for AI moves
+// ============================================================================
+// CONSTANTS AND CONFIGURATION
+// ============================================================================
+
+const (
+	BOARD_ROWS    = 6
+	BOARD_COLS    = 7
+	WINNING_COUNT = 4
+	PLAYER_1      = 1
+	PLAYER_2      = 2
+	PLAYER_DRAW   = 3
+	CELL_EMPTY    = 0
+)
+
+const (
+	GAME_MODE_TWO_PLAYER = "twoPlayer"
+	GAME_MODE_AI         = "ai"
+)
+
+// ============================================================================
+// DATA STRUCTURES
+// ============================================================================
+
+// GameState représente l'état actuel du jeu
+type GameState struct {
+	Board         [BOARD_ROWS][BOARD_COLS]int // Grille de jeu 6x7
+	CurrentPlayer int                          // Joueur actuel (1 ou 2)
+	Mode          string                       // Mode de jeu (twoPlayer ou ai)
+	GameOver      bool                         // True si la partie est terminée
+	Winner        int                          // 0=none, 1=J1, 2=J2, 3=draw
+	StatusMessage string                       // Message d'état affiché à l'utilisateur
+}
+
+// GameResponse structure pour les réponses API JSON
+type GameResponse struct {
+	Success   bool       `json:"success"`
+	Message   string     `json:"message"`
+	GameState *GameState `json:"gameState,omitempty"`
+	Winner    int        `json:"winner,omitempty"`
+}
+
+// ============================================================================
+// GLOBAL VARIABLES
+// ============================================================================
+
+var currentGame *GameState
+var tmpl *template.Template
+
+// ============================================================================
+// INITIALIZATION
+// ============================================================================
+
+// Initialise le générateur aléatoire pour les mouvements de l'IA
 func init() {
 	rand.Seed(time.Now().UnixNano())
 }
 
-type GameState struct {
-	Board         [6][7]int
-	CurrentPlayer int
-	Mode          string
-	GameOver      bool
-	Winner        int
-	StatusMessage string
-}
-
-// Global game state (in production, use sessions or database)
-var currentGame *GameState
-var tmpl *template.Template
+// ============================================================================
+// MAIN ENTRY POINT
+// ============================================================================
 
 func main() {
-	// Initialize game
+	// Initialisation du jeu avec l'état par défaut
+	initializeGame()
+
+	// Chargement du template HTML
+	loadTemplates()
+
+	// Configuration du serveur HTTP
+	setupServer()
+
+	// Démarrage du serveur
+	log.Println("🎮 Serveur démarré sur http://localhost:8080")
+	log.Println("📱 Ouvrez votre navigateur et commencez à jouer !")
+	log.Fatal(http.ListenAndServe(":8080", nil))
+}
+
+// ============================================================================
+// SETUP FUNCTIONS
+// ============================================================================
+
+func initializeGame() {
 	currentGame = &GameState{
-		Board:         [6][7]int{},
-		CurrentPlayer:  1,
-		Mode:          "twoPlayer",
+		Board:         [BOARD_ROWS][BOARD_COLS]int{},
+		CurrentPlayer: PLAYER_1,
+		Mode:          GAME_MODE_TWO_PLAYER,
 		GameOver:      false,
 		Winner:        0,
 		StatusMessage: "",
 	}
+}
 
-	// Load templates
+func loadTemplates() {
 	var err error
 	tmpl, err = template.ParseFiles("templates/index.html")
 	if err != nil {
-		log.Fatal(err)
+		log.Fatal("❌ Erreur lors du chargement du template:", err)
 	}
+}
 
-	// Setup routes
+func setupServer() {
 	mux := http.NewServeMux()
-	
-	// Serve static files
+
+	// Fichiers statiques (CSS, images, etc.)
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
-	
-	// Game routes
+
+	// Routes principales du jeu
 	mux.HandleFunc("/", serveIndex)
 	mux.HandleFunc("/game/mode", handleModeChange)
 	mux.HandleFunc("/game/move", handleMove)
 	mux.HandleFunc("/game/new", handleNewGame)
-	
-	// API endpoints for backwards compatibility
+
+	// API JSON (compatibilité ascendante)
 	mux.HandleFunc("/api/game", getGameStateAPI)
 	mux.HandleFunc("/api/new-game", newGameAPI)
 	mux.HandleFunc("/api/move", handleMoveAPI)
 	mux.HandleFunc("/api/ai-move", aiMoveAPI)
 
-	// Start server
-	log.Println("Server starting on http://localhost:8080")
-	log.Fatal(http.ListenAndServe(":8080", mux))
+	http.DefaultServeMux = mux
 }
 
+// ============================================================================
+// HTTP HANDLERS - PAGES HTML
+// ============================================================================
+
+// Affiche la page principale du jeu
 func serveIndex(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
 		http.NotFound(w, r)
 		return
 	}
-	
-	tmpl.Execute(w, currentGame)
+
+	if err := tmpl.Execute(w, currentGame); err != nil {
+		log.Printf("❌ Erreur d'affichage: %v", err)
+		http.Error(w, "Erreur interne", http.StatusInternalServerError)
+	}
 }
 
+// Gère le changement de mode de jeu (2 joueurs / IA)
 func handleModeChange(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
 		return
 	}
 
 	mode := r.FormValue("mode")
-	currentGame.Mode = mode
-	currentGame.Board = [6][7]int{}
-	currentGame.CurrentPlayer = 1
-	currentGame.GameOver = false
-	currentGame.Winner = 0
-	currentGame.StatusMessage = ""
-
-	// Redirect to home
+	startNewGame(mode)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
+// Gère le placement d'un jeton
 func handleMove(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
 		return
 	}
 
+	// Récupération et validation de la colonne
 	colStr := r.FormValue("col")
 	col, err := strconv.Atoi(colStr)
-	if err != nil || col < 0 || col > 6 {
-		currentGame.StatusMessage = "Colonne invalide"
+	if err != nil || col < 0 || col >= BOARD_COLS {
+		currentGame.StatusMessage = "❌ Colonne invalide"
 		tmpl.Execute(w, currentGame)
 		return
 	}
 
-	// Place piece
+	// Placement du jeton
 	row := placePiece(col, currentGame.CurrentPlayer)
-	
 	if row == -1 {
-		currentGame.StatusMessage = "Colonne pleine"
+		currentGame.StatusMessage = "❌ Colonne pleine !"
 		tmpl.Execute(w, currentGame)
 		return
 	}
 
-	// Check for win
-	winner := checkForWin(row, col)
-	
-	if winner > 0 {
-		currentGame.GameOver = true
-		currentGame.Winner = winner
-		currentGame.StatusMessage = getWinnerMessage(winner)
-	} else if isBoardFull() {
-		currentGame.GameOver = true
-		currentGame.Winner = 3
-		currentGame.StatusMessage = "Match nul !"
-	} else {
-		// Switch player (handle AI turn if needed)
-		if currentGame.Mode == "twoPlayer" || (currentGame.Mode == "ai" && currentGame.CurrentPlayer == 1) {
-			currentGame.CurrentPlayer = 3 - currentGame.CurrentPlayer
-		}
-		
-		// If AI mode and player 2's turn, make AI move
-		if currentGame.Mode == "ai" && currentGame.CurrentPlayer == 2 && !currentGame.GameOver {
-			time.Sleep(600 * time.Millisecond) // Pause de 600ms avant que l'IA joue
-			aiMakeMove()
-		}
-		currentGame.StatusMessage = ""
+	// Vérification de la victoire ou du match nul
+	checkGameEnd(row, col)
+
+	// Gestion du tour de l'IA si nécessaire
+	if !currentGame.GameOver && currentGame.Mode == GAME_MODE_AI && currentGame.CurrentPlayer == PLAYER_2 {
+		time.Sleep(600 * time.Millisecond) // Petite pause pour l'effet visuel
+		aiMakeMove()
 	}
 
 	tmpl.Execute(w, currentGame)
 }
 
+// Commence une nouvelle partie
 func handleNewGame(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
 		return
 	}
 
 	mode := r.FormValue("mode")
-	currentGame = &GameState{
-		Board:         [6][7]int{},
-		CurrentPlayer:  1,
-		Mode:          mode,
-		GameOver:      false,
-		Winner:        0,
-		StatusMessage: "",
+	if mode == "" {
+		mode = currentGame.Mode
 	}
 
+	startNewGame(mode)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-// AI makes a move automatically
-func aiMakeMove() {
-	col := getBestMove()
-	row := placePiece(col, 2)
-	
-	if row == -1 {
-		return
-	}
+// ============================================================================
+// GAME LOGIC - CORE FUNCTIONS
+// ============================================================================
 
-	// Check for win
-	winner := checkForWin(row, col)
-	
-	if winner > 0 {
-		currentGame.GameOver = true
-		currentGame.Winner = winner
-		currentGame.StatusMessage = getWinnerMessage(winner)
-	} else if isBoardFull() {
-		currentGame.GameOver = true
-		currentGame.Winner = 3
-		currentGame.StatusMessage = "Match nul !"
-	} else {
-		currentGame.CurrentPlayer = 1
-		currentGame.StatusMessage = ""
-	}
-}
-
-// Place a piece in the lowest available row
+// Place un jeton dans la colonne spécifiée
+// Retourne la ligne où le jeton a été placé, ou -1 si la colonne est pleine
 func placePiece(col, player int) int {
-	for row := 5; row >= 0; row-- {
-		if currentGame.Board[row][col] == 0 {
+	for row := BOARD_ROWS - 1; row >= 0; row-- {
+		if currentGame.Board[row][col] == CELL_EMPTY {
 			currentGame.Board[row][col] = player
 			return row
 		}
@@ -203,106 +228,153 @@ func placePiece(col, player int) int {
 	return -1
 }
 
-// Check if there's a winner
+// Vérifie s'il y a un gagnant après un mouvement
 func checkForWin(row, col int) int {
 	player := currentGame.Board[row][col]
-	
-	// Check horizontal
-	count := 1
-	for j := col - 1; j >= 0 && currentGame.Board[row][j] == player; j-- {
-		count++
-	}
-	for j := col + 1; j < 7 && currentGame.Board[row][j] == player; j++ {
-		count++
-	}
-	if count >= 4 {
+
+	// Vérification horizontale
+	if count := checkDirection(row, col, 0, 1, player); count >= WINNING_COUNT {
 		return player
 	}
 
-	// Check vertical
-	count = 1
-	for i := row + 1; i < 6 && currentGame.Board[i][col] == player; i++ {
-		count++
-	}
-	if count >= 4 {
+	// Vérification verticale
+	if count := checkDirection(row, col, 1, 0, player); count >= WINNING_COUNT {
 		return player
 	}
 
-	// Check diagonal (top-left to bottom-right)
-	count = 1
-	for i, j := row-1, col-1; i >= 0 && j >= 0 && currentGame.Board[i][j] == player; i, j = i-1, j-1 {
-		count++
-	}
-	for i, j := row+1, col+1; i < 6 && j < 7 && currentGame.Board[i][j] == player; i, j = i+1, j+1 {
-		count++
-	}
-	if count >= 4 {
+	// Vérification diagonale (haut-gauche vers bas-droite)
+	if count := checkDirection(row, col, 1, 1, player); count >= WINNING_COUNT {
 		return player
 	}
 
-	// Check diagonal (bottom-left to top-right)
-	count = 1
-	for i, j := row+1, col-1; i < 6 && j >= 0 && currentGame.Board[i][j] == player; i, j = i+1, j-1 {
-		count++
-	}
-	for i, j := row-1, col+1; i >= 0 && j < 7 && currentGame.Board[i][j] == player; i, j = i-1, j+1 {
-		count++
-	}
-	if count >= 4 {
+	// Vérification diagonale (bas-gauche vers haut-droite)
+	if count := checkDirection(row, col, -1, 1, player); count >= WINNING_COUNT {
 		return player
 	}
 
 	return 0
 }
 
+// Compte les jetons dans une direction
+func checkDirection(row, col, dRow, dCol, player int) int {
+	count := 1
+
+	// Comptage dans un sens
+	for i, j := row+dRow, col+dCol; i >= 0 && i < BOARD_ROWS && j >= 0 && j < BOARD_COLS && currentGame.Board[i][j] == player; i, j = i+dRow, j+dCol {
+		count++
+	}
+
+	// Comptage dans l'autre sens
+	for i, j := row-dRow, col-dCol; i >= 0 && i < BOARD_ROWS && j >= 0 && j < BOARD_COLS && currentGame.Board[i][j] == player; i, j = i-dRow, j-dCol {
+		count++
+	}
+
+	return count
+}
+
+// Vérifie si le plateau est plein (match nul possible)
 func isBoardFull() bool {
-	for col := 0; col < 7; col++ {
-		if currentGame.Board[0][col] == 0 {
+	for col := 0; col < BOARD_COLS; col++ {
+		if currentGame.Board[0][col] == CELL_EMPTY {
 			return false
 		}
 	}
 	return true
 }
 
+// Vérifie la fin de partie (victoire ou match nul)
+func checkGameEnd(row, col int) {
+	winner := checkForWin(row, col)
+
+	if winner > 0 {
+		currentGame.GameOver = true
+		currentGame.Winner = winner
+		currentGame.StatusMessage = getWinnerMessage(winner)
+	} else if isBoardFull() {
+		currentGame.GameOver = true
+		currentGame.Winner = PLAYER_DRAW
+		currentGame.StatusMessage = "🤝 Match nul !"
+	} else {
+		// Changement de joueur
+		if currentGame.Mode == GAME_MODE_TWO_PLAYER || (currentGame.Mode == GAME_MODE_AI && currentGame.CurrentPlayer == PLAYER_1) {
+			currentGame.CurrentPlayer = PLAYER_2 + PLAYER_1 - currentGame.CurrentPlayer
+		}
+		currentGame.StatusMessage = ""
+	}
+}
+
+// Retourne le message de victoire approprié
 func getWinnerMessage(winner int) string {
 	switch winner {
-	case 1:
-		return "Le joueur rouge (Joueur 1) gagne ! 🎉"
-	case 2:
-		return "Le joueur jaune (Joueur 2) gagne ! 🎉"
-	case 3:
-		return "Match nul ! Égalité ! 🤝"
+	case PLAYER_1:
+		return "🎉 Le Joueur Rouge (Joueur 1) gagne ! 🎉"
+	case PLAYER_2:
+		return "🎉 Le Joueur Jaune (Joueur 2) gagne ! 🎉"
+	case PLAYER_DRAW:
+		return "🤝 Match nul ! Égalité parfaite ! 🤝"
 	default:
 		return ""
 	}
 }
 
-// Get the best move for the AI
+// Initialise une nouvelle partie avec le mode spécifié
+func startNewGame(mode string) {
+	currentGame = &GameState{
+		Board:         [BOARD_ROWS][BOARD_COLS]int{},
+		CurrentPlayer: PLAYER_1,
+		Mode:          mode,
+		GameOver:      false,
+		Winner:        0,
+		StatusMessage: "",
+	}
+}
+
+// ============================================================================
+// AI FUNCTIONS
+// ============================================================================
+
+// Fait jouer l'IA automatiquement
+func aiMakeMove() {
+	col := getBestMove()
+	row := placePiece(col, PLAYER_2)
+
+	if row == -1 {
+		return
+	}
+
+	checkGameEnd(row, col)
+
+	if !currentGame.GameOver {
+		currentGame.CurrentPlayer = PLAYER_1
+		currentGame.StatusMessage = ""
+	}
+}
+
+// Calcule le meilleur mouvement pour l'IA
 func getBestMove() int {
-	// First, check if AI can win
-	if col := findWinningMove(2); col != -1 {
+	// Priorité 1: L'IA peut-elle gagner ?
+	if col := findWinningMove(PLAYER_2); col != -1 {
 		return col
 	}
 
-	// Then, check if need to block player 1
-	if col := findWinningMove(1); col != -1 {
+	// Priorité 2: Bloquer l'adversaire s'il peut gagner
+	if col := findWinningMove(PLAYER_1); col != -1 {
 		return col
 	}
 
-	// Otherwise, prefer center column if available
-	center := 3
-	if isValidMove(center) {
-		return center
+	// Priorité 3: Jouer au centre (stratégique)
+	centerCol := 3
+	if isValidMove(centerCol) {
+		return centerCol
 	}
 
-	// Find first valid move randomly
+	// Sinon: mouvement aléatoire valide
 	return findRandomValidMove()
 }
 
-// Find a winning move for the specified player
+// Trouve un mouvement gagnant pour le joueur spécifié
 func findWinningMove(player int) int {
-	validMoves := getValidMoves()
-	for _, col := range validMoves {
+	for _, col := range getValidMoves() {
 		if wouldWin(col, player) {
 			return col
 		}
@@ -310,10 +382,10 @@ func findWinningMove(player int) int {
 	return -1
 }
 
-// Get all valid column moves
+// Retourne toutes les colonnes jouables
 func getValidMoves() []int {
 	var moves []int
-	for col := 0; col < 7; col++ {
+	for col := 0; col < BOARD_COLS; col++ {
 		if isValidMove(col) {
 			moves = append(moves, col)
 		}
@@ -321,7 +393,7 @@ func getValidMoves() []int {
 	return moves
 }
 
-// Find a random valid move
+// Choisit un mouvement aléatoire parmi les mouvements valides
 func findRandomValidMove() int {
 	moves := getValidMoves()
 	if len(moves) == 0 {
@@ -330,116 +402,129 @@ func findRandomValidMove() int {
 	return moves[rand.Intn(len(moves))]
 }
 
-// Check if a move is valid (column is not full)
+// Vérifie si un mouvement est valide (la colonne n'est pas pleine)
 func isValidMove(col int) bool {
-	return col >= 0 && col < 7 && currentGame.Board[0][col] == 0
+	return col >= 0 && col < BOARD_COLS && currentGame.Board[0][col] == CELL_EMPTY
 }
 
-// Check if placing a piece would result in a win
+// Simule un mouvement et vérifie s'il serait gagnant
 func wouldWin(col, player int) bool {
+	// Trouve la ligne où le jeton sera placé
 	row := -1
-	for r := 5; r >= 0; r-- {
-		if currentGame.Board[r][col] == 0 {
+	for r := BOARD_ROWS - 1; r >= 0; r-- {
+		if currentGame.Board[r][col] == CELL_EMPTY {
 			row = r
 			break
 		}
 	}
-	
+
 	if row == -1 {
 		return false
 	}
 
+	// Simulation temporaire du mouvement
 	currentGame.Board[row][col] = player
 	winner := checkForWin(row, col)
-	currentGame.Board[row][col] = 0
-	
+	currentGame.Board[row][col] = CELL_EMPTY
+
 	return winner == player
 }
 
-// API endpoints for backwards compatibility (return JSON)
-type GameResponse struct {
-	Success   bool      `json:"success"`
-	Message   string    `json:"message"`
-	GameState *GameState `json:"gameState,omitempty"`
-	Winner    int       `json:"winner,omitempty"`
-}
+// ============================================================================
+// API HANDLERS - JSON ENDPOINTS
+// ============================================================================
 
+// Retourne l'état actuel du jeu en JSON
 func getGameStateAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(currentGame)
 }
 
+// Crée une nouvelle partie via l'API
 func newGameAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
 		return
 	}
-	var req struct{ Mode string }
+
+	var req struct {
+		Mode string `json:"mode"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
-	currentGame = &GameState{Board: [6][7]int{}, CurrentPlayer: 1, Mode: req.Mode, GameOver: false, Winner: 0}
+
+	startNewGame(req.Mode)
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(GameResponse{Success: true, GameState: currentGame})
+	json.NewEncoder(w).Encode(GameResponse{
+		Success:   true,
+		GameState: currentGame,
+	})
 }
 
+// Gère un mouvement via l'API
 func handleMoveAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
 		return
 	}
-	var req struct{ Col int }
+
+	var req struct {
+		Col int `json:"col"`
+	}
 	json.NewDecoder(r.Body).Decode(&req)
+
 	row := placePiece(req.Col, currentGame.CurrentPlayer)
 	if row == -1 {
-		json.NewEncoder(w).Encode(GameResponse{Success: false, Message: "Column is full"})
+		json.NewEncoder(w).Encode(GameResponse{
+			Success: false,
+			Message: "Colonne pleine",
+		})
 		return
 	}
-	winner := checkForWin(row, req.Col)
+
+	checkGameEnd(row, req.Col)
+
 	var response GameResponse
-	if winner > 0 {
-		currentGame.GameOver = true
-		currentGame.Winner = winner
-		response = GameResponse{Success: true, Message: getWinnerMessage(winner), GameState: currentGame, Winner: winner}
-	} else if isBoardFull() {
-		currentGame.GameOver = true
-		currentGame.Winner = 3
-		response = GameResponse{Success: true, Message: "Match nul !", GameState: currentGame, Winner: 3}
-	} else {
-		if currentGame.Mode == "twoPlayer" {
-			currentGame.CurrentPlayer = 3 - currentGame.CurrentPlayer
-		} else if currentGame.Mode == "ai" {
-			currentGame.CurrentPlayer = 3 - currentGame.CurrentPlayer
+	if currentGame.GameOver {
+		response = GameResponse{
+			Success:   true,
+			Message:   currentGame.StatusMessage,
+			GameState: currentGame,
+			Winner:    currentGame.Winner,
 		}
-		response = GameResponse{Success: true, GameState: currentGame}
+	} else {
+		response = GameResponse{
+			Success:   true,
+			GameState: currentGame,
+		}
 	}
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
 }
 
+// Fait jouer l'IA via l'API
 func aiMoveAPI(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		http.Error(w, "Méthode non autorisée", http.StatusMethodNotAllowed)
 		return
 	}
+
 	col := getBestMove()
-	row := placePiece(col, 2)
+	row := placePiece(col, PLAYER_2)
+
 	if row == -1 {
-		http.Error(w, "AI cannot make a move", http.StatusInternalServerError)
+		http.Error(w, "L'IA ne peut pas jouer", http.StatusInternalServerError)
 		return
 	}
-	winner := checkForWin(row, col)
-	var response GameResponse
-	if winner > 0 {
-		currentGame.GameOver = true
-		currentGame.Winner = winner
-		response = GameResponse{Success: true, Message: getWinnerMessage(winner), GameState: currentGame, Winner: winner}
-	} else if isBoardFull() {
-		currentGame.GameOver = true
-		currentGame.Winner = 3
-		response = GameResponse{Success: true, Message: "Match nul !", GameState: currentGame, Winner: 3}
-	} else {
-		currentGame.CurrentPlayer = 1
-		response = GameResponse{Success: true, GameState: currentGame}
-	}
+
+	checkGameEnd(row, col)
+
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	json.NewEncoder(w).Encode(GameResponse{
+		Success:   true,
+		Message:   currentGame.StatusMessage,
+		GameState: currentGame,
+		Winner:    currentGame.Winner,
+	})
 }

@@ -1,12 +1,18 @@
+/* ============================================================================
+   RESET CSS
+   ============================================================================ */
 * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
 }
 
+/* ============================================================================
+   BODY & MAIN LAYOUT
+   ============================================================================ */
 body {
     font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-    background: linear-gradient(135deg, #ff7b54 0%, #ff5722 100%);
+    background: linear-gradient(135deg, #ffd93d 0%, #f59f00 100%);
     min-height: 100vh;
     display: flex;
     justify-content: center;
@@ -23,6 +29,9 @@ body {
     width: 100%;
 }
 
+/* ============================================================================
+   TITRES
+   ============================================================================ */
 h1 {
     text-align: center;
     color: #333;
@@ -30,6 +39,9 @@ h1 {
     font-size: 2.5em;
 }
 
+/* ============================================================================
+   CONTRÔLES DU JEU
+   ============================================================================ */
 .game-controls {
     display: flex;
     justify-content: space-between;
@@ -44,11 +56,12 @@ h1 {
     gap: 10px;
 }
 
+/* Boutons de sélection de mode */
 .mode-btn {
     padding: 10px 20px;
-    border: 2px solid #ff5722;
+    border: 2px solid #f59f00;
     background: white;
-    color: #ff5722;
+    color: #f59f00;
     border-radius: 8px;
     cursor: pointer;
     font-size: 14px;
@@ -56,15 +69,16 @@ h1 {
 }
 
 .mode-btn:hover {
-    background: #ff5722;
+    background: #f59f00;
     color: white;
 }
 
 .mode-btn.active {
-    background: #ff5722;
+    background: #f59f00;
     color: white;
 }
 
+/* Affichage du joueur actuel */
 .current-player {
     display: flex;
     align-items: center;
@@ -81,6 +95,9 @@ h1 {
     height: 40px;
 }
 
+/* ============================================================================
+   MESSAGES D'ÉTAT
+   ============================================================================ */
 .game-status {
     text-align: center;
     margin-bottom: 20px;
@@ -92,12 +109,16 @@ h1 {
     font-weight: bold;
 }
 
+/* ============================================================================
+   PLATEAU DE JEU
+   ============================================================================ */
 .board-container {
     display: flex;
     justify-content: center;
     margin-bottom: 20px;
 }
 
+/* Grille du jeu 7 colonnes x 6 lignes */
 .board {
     display: grid;
     grid-template-columns: repeat(7, 1fr);
@@ -111,6 +132,7 @@ h1 {
     aspect-ratio: 7/6;
 }
 
+/* Cases du plateau (cellules) */
 .cell {
     background: white;
     border-radius: 50%;
@@ -135,6 +157,9 @@ h1 {
     cursor: not-allowed;
 }
 
+/* ============================================================================
+   JETONS (PIECES)
+   ============================================================================ */
 .token {
     width: 85%;
     height: 85%;
@@ -143,22 +168,28 @@ h1 {
     transition: all 0.3s;
 }
 
+/* Jeton du Joueur 1 (Rouge) */
 .token-red {
     background: radial-gradient(circle at 30% 30%, #ff6b6b, #c92a2a);
 }
 
+/* Jeton du Joueur 2 (Jaune) */
 .token-yellow {
     background: radial-gradient(circle at 30% 30%, #ffd93d, #f59f00);
 }
 
+/* Case vide */
 .token-empty {
     background: white;
 }
 
+/* ============================================================================
+   BOUTONS
+   ============================================================================ */
 .new-game-btn {
     width: 100%;
     padding: 15px;
-    background: linear-gradient(135deg, #ff7b54 0%, #ff5722 100%);
+    background: linear-gradient(135deg, #ffd93d 0%, #f59f00 100%);
     color: white;
     border: none;
     border-radius: 10px;
@@ -170,9 +201,12 @@ h1 {
 
 .new-game-btn:hover {
     transform: translateY(-2px);
-    box-shadow: 0 5px 20px rgba(255, 87, 34, 0.4);
+    box-shadow: 0 5px 20px rgba(245, 159, 0, 0.4);
 }
 
+/* ============================================================================
+   MODAL DE VICTOIRE
+   ============================================================================ */
 .winner-overlay {
     position: fixed;
     top: 0;
@@ -217,7 +251,7 @@ h1 {
 
 .winner-modal button {
     padding: 15px 40px;
-    background: linear-gradient(135deg, #ff7b54 0%, #ff5722 100%);
+    background: linear-gradient(135deg, #ffd93d 0%, #f59f00 100%);
     color: white;
     border: none;
     border-radius: 10px;
@@ -229,9 +263,12 @@ h1 {
 
 .winner-modal button:hover {
     transform: scale(1.05);
-    box-shadow: 0 5px 20px rgba(255, 87, 34, 0.4);
+    box-shadow: 0 5px 20px rgba(245, 159, 0, 0.4);
 }
 
+/* ============================================================================
+   RESPONSIVE DESIGN
+   ============================================================================ */
 @media (max-width: 600px) {
     h1 {
         font-size: 2em;
