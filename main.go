@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"html/template"
 	"log"
-	"net/http"
 	"math/rand"
+	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -14,36 +16,34 @@ func init() {
 }
 
 type GameState struct {
-	Board        [6][7]int `json:"board"` // 0=empty, 1=player1, 2=player2
-	CurrentPlayer int      `json:"currentPlayer"` // 1 or 2
-	Mode         string    `json:"mode"` // "ai" or "twoPlayer"
-	GameOver     bool      `json:"gameOver"`
-	Winner       int       `json:"winner"` // 0=none, 1=player1, 2=player2, 3=draw
-}
-
-type MoveRequest struct {
-	Col int `json:"col"`
-	Row int `json:"row"`
-}
-
-type GameResponse struct {
-	Success   bool      `json:"success"`
-	Message   string    `json:"message"`
-	GameState *GameState `json:"gameState,omitempty"`
-	Winner    int       `json:"winner,omitempty"`
+	Board         [6][7]int
+	CurrentPlayer int
+	Mode          string
+	GameOver      bool
+	Winner        int
+	StatusMessage string
 }
 
 // Global game state (in production, use sessions or database)
 var currentGame *GameState
+var tmpl *template.Template
 
 func main() {
 	// Initialize game
 	currentGame = &GameState{
-		Board:        [6][7]int{},
-		CurrentPlayer: 1,
-		Mode:         "twoPlayer",
-		GameOver:     false,
-		Winner:       0,
+		Board:         [6][7]int{},
+		CurrentPlayer:  1,
+		Mode:          "twoPlayer",
+		GameOver:      false,
+		Winner:        0,
+		StatusMessage: "",
+	}
+
+	// Load templates
+	var err error
+	tmpl, err = template.ParseFiles("templates/index.html")
+	if err != nil {
+		log.Fatal(err)
 	}
 
 	// Setup routes
@@ -52,15 +52,17 @@ func main() {
 	// Serve static files
 	mux.Handle("/static/", http.StripPrefix("/static/", http.FileServer(http.Dir("static"))))
 	
-	// Serve index.html
+	// Game routes
 	mux.HandleFunc("/", serveIndex)
+	mux.HandleFunc("/game/mode", handleModeChange)
+	mux.HandleFunc("/game/move", handleMove)
+	mux.HandleFunc("/game/new", handleNewGame)
 	
-	// API endpoints
-	mux.HandleFunc("/api/game", getGameState)
-	mux.HandleFunc("/api/new-game", newGame)
-	mux.HandleFunc("/api/move", handleMove)
-	mux.HandleFunc("/api/ai-move", aiMove)
-	mux.HandleFunc("/api/check-win", checkWin)
+	// API endpoints for backwards compatibility
+	mux.HandleFunc("/api/game", getGameStateAPI)
+	mux.HandleFunc("/api/new-game", newGameAPI)
+	mux.HandleFunc("/api/move", handleMoveAPI)
+	mux.HandleFunc("/api/ai-move", aiMoveAPI)
 
 	// Start server
 	log.Println("Server starting on http://localhost:8080")
@@ -73,43 +75,25 @@ func serveIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	
-	http.ServeFile(w, r, "templates/index.html")
+	tmpl.Execute(w, currentGame)
 }
 
-func getGameState(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(currentGame)
-}
-
-func newGame(w http.ResponseWriter, r *http.Request) {
+func handleModeChange(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// Parse mode from request body
-	var req struct {
-		Mode string `json:"mode"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
+	mode := r.FormValue("mode")
+	currentGame.Mode = mode
+	currentGame.Board = [6][7]int{}
+	currentGame.CurrentPlayer = 1
+	currentGame.GameOver = false
+	currentGame.Winner = 0
+	currentGame.StatusMessage = ""
 
-	currentGame = &GameState{
-		Board:        [6][7]int{},
-		CurrentPlayer: 1,
-		Mode:         req.Mode,
-		GameOver:     false,
-		Winner:       0,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(GameResponse{
-		Success:   true,
-		Message:   "New game started",
-		GameState: currentGame,
-	})
+	// Redirect to home
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func handleMove(w http.ResponseWriter, r *http.Request) {
@@ -118,73 +102,93 @@ func handleMove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req MoveRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+	colStr := r.FormValue("col")
+	col, err := strconv.Atoi(colStr)
+	if err != nil || col < 0 || col > 6 {
+		currentGame.StatusMessage = "Colonne invalide"
+		tmpl.Execute(w, currentGame)
 		return
 	}
 
-	// Place piece in the lowest available row in the column
-	row := placePiece(req.Col, currentGame.CurrentPlayer)
+	// Place piece
+	row := placePiece(col, currentGame.CurrentPlayer)
 	
 	if row == -1 {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(GameResponse{
-			Success: false,
-			Message: "Column is full",
-		})
+		currentGame.StatusMessage = "Colonne pleine"
+		tmpl.Execute(w, currentGame)
 		return
 	}
 
 	// Check for win
-	winner := checkForWin(row, req.Col)
+	winner := checkForWin(row, col)
 	
-	var response GameResponse
 	if winner > 0 {
 		currentGame.GameOver = true
 		currentGame.Winner = winner
-		response = GameResponse{
-			Success:   true,
-			Message:   getWinnerMessage(winner),
-			GameState: currentGame,
-			Winner:    winner,
-		}
+		currentGame.StatusMessage = getWinnerMessage(winner)
 	} else if isBoardFull() {
 		currentGame.GameOver = true
-		currentGame.Winner = 3 // Draw
-		response = GameResponse{
-			Success:   true,
-			Message:   "Match nul !",
-			GameState: currentGame,
-			Winner:    3,
-		}
+		currentGame.Winner = 3
+		currentGame.StatusMessage = "Match nul !"
 	} else {
-		// Switch player
-		if currentGame.Mode == "twoPlayer" {
-			// In two player mode, always alternate
-			currentGame.CurrentPlayer = 3 - currentGame.CurrentPlayer
-		} else if currentGame.Mode == "ai" {
-			// In AI mode, alternate between human (player 1) and computer (player 2)
+		// Switch player (handle AI turn if needed)
+		if currentGame.Mode == "twoPlayer" || (currentGame.Mode == "ai" && currentGame.CurrentPlayer == 1) {
 			currentGame.CurrentPlayer = 3 - currentGame.CurrentPlayer
 		}
-		response = GameResponse{
-			Success:   true,
-			Message:   "Move successful",
-			GameState: currentGame,
+		
+		// If AI mode and player 2's turn, make AI move
+		if currentGame.Mode == "ai" && currentGame.CurrentPlayer == 2 && !currentGame.GameOver {
+			aiMakeMove()
 		}
+		currentGame.StatusMessage = ""
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
+	tmpl.Execute(w, currentGame)
 }
 
-func checkWin(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"gameOver": currentGame.GameOver,
-		"winner":   currentGame.Winner,
-		"message":  getWinnerMessage(currentGame.Winner),
-	})
+func handleNewGame(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	mode := r.FormValue("mode")
+	currentGame = &GameState{
+		Board:         [6][7]int{},
+		CurrentPlayer:  1,
+		Mode:          mode,
+		GameOver:      false,
+		Winner:        0,
+		StatusMessage: "",
+	}
+
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// AI makes a move automatically
+func aiMakeMove() {
+	col := getBestMove()
+	row := placePiece(col, 2)
+	
+	if row == -1 {
+		return
+	}
+
+	// Check for win
+	winner := checkForWin(row, col)
+	
+	if winner > 0 {
+		currentGame.GameOver = true
+		currentGame.Winner = winner
+		currentGame.StatusMessage = getWinnerMessage(winner)
+	} else if isBoardFull() {
+		currentGame.GameOver = true
+		currentGame.Winner = 3
+		currentGame.StatusMessage = "Match nul !"
+	} else {
+		currentGame.CurrentPlayer = 1
+		currentGame.StatusMessage = ""
+	}
 }
 
 // Place a piece in the lowest available row
@@ -195,7 +199,7 @@ func placePiece(col, player int) int {
 			return row
 		}
 	}
-	return -1 // Column is full
+	return -1
 }
 
 // Check if there's a winner
@@ -272,65 +276,6 @@ func getWinnerMessage(winner int) string {
 	}
 }
 
-// AI endpoint - plays a move for the computer
-func aiMove(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	if currentGame.Mode != "ai" || currentGame.CurrentPlayer != 2 || currentGame.GameOver {
-		http.Error(w, "Invalid AI move request", http.StatusBadRequest)
-		return
-	}
-
-	// Get best move
-	col := getBestMove()
-	
-	// Place piece
-	row := placePiece(col, 2)
-	
-	if row == -1 {
-		http.Error(w, "AI cannot make a move", http.StatusInternalServerError)
-		return
-	}
-
-	// Check for win
-	winner := checkForWin(row, col)
-	
-	var response GameResponse
-	if winner > 0 {
-		currentGame.GameOver = true
-		currentGame.Winner = winner
-		response = GameResponse{
-			Success:   true,
-			Message:   getWinnerMessage(winner),
-			GameState: currentGame,
-			Winner:    winner,
-		}
-	} else if isBoardFull() {
-		currentGame.GameOver = true
-		currentGame.Winner = 3
-		response = GameResponse{
-			Success:   true,
-			Message:   "Match nul !",
-			GameState: currentGame,
-			Winner:    3,
-		}
-	} else {
-		// Switch back to player 1
-		currentGame.CurrentPlayer = 1
-		response = GameResponse{
-			Success:   true,
-			Message:   "AI move successful",
-			GameState: currentGame,
-		}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(response)
-}
-
 // Get the best move for the AI
 func getBestMove() int {
 	// First, check if AI can win
@@ -391,7 +336,6 @@ func isValidMove(col int) bool {
 
 // Check if placing a piece would result in a win
 func wouldWin(col, player int) bool {
-	// Find the row where the piece would land
 	row := -1
 	for r := 5; r >= 0; r-- {
 		if currentGame.Board[r][col] == 0 {
@@ -404,14 +348,97 @@ func wouldWin(col, player int) bool {
 		return false
 	}
 
-	// Temporarily place the piece
 	currentGame.Board[row][col] = player
-	
-	// Check if this creates a win
 	winner := checkForWin(row, col)
-	
-	// Restore the cell
 	currentGame.Board[row][col] = 0
 	
 	return winner == player
+}
+
+// API endpoints for backwards compatibility (return JSON)
+type GameResponse struct {
+	Success   bool      `json:"success"`
+	Message   string    `json:"message"`
+	GameState *GameState `json:"gameState,omitempty"`
+	Winner    int       `json:"winner,omitempty"`
+}
+
+func getGameStateAPI(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(currentGame)
+}
+
+func newGameAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct{ Mode string }
+	json.NewDecoder(r.Body).Decode(&req)
+	currentGame = &GameState{Board: [6][7]int{}, CurrentPlayer: 1, Mode: req.Mode, GameOver: false, Winner: 0}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(GameResponse{Success: true, GameState: currentGame})
+}
+
+func handleMoveAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct{ Col int }
+	json.NewDecoder(r.Body).Decode(&req)
+	row := placePiece(req.Col, currentGame.CurrentPlayer)
+	if row == -1 {
+		json.NewEncoder(w).Encode(GameResponse{Success: false, Message: "Column is full"})
+		return
+	}
+	winner := checkForWin(row, req.Col)
+	var response GameResponse
+	if winner > 0 {
+		currentGame.GameOver = true
+		currentGame.Winner = winner
+		response = GameResponse{Success: true, Message: getWinnerMessage(winner), GameState: currentGame, Winner: winner}
+	} else if isBoardFull() {
+		currentGame.GameOver = true
+		currentGame.Winner = 3
+		response = GameResponse{Success: true, Message: "Match nul !", GameState: currentGame, Winner: 3}
+	} else {
+		if currentGame.Mode == "twoPlayer" {
+			currentGame.CurrentPlayer = 3 - currentGame.CurrentPlayer
+		} else if currentGame.Mode == "ai" {
+			currentGame.CurrentPlayer = 3 - currentGame.CurrentPlayer
+		}
+		response = GameResponse{Success: true, GameState: currentGame}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+func aiMoveAPI(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	col := getBestMove()
+	row := placePiece(col, 2)
+	if row == -1 {
+		http.Error(w, "AI cannot make a move", http.StatusInternalServerError)
+		return
+	}
+	winner := checkForWin(row, col)
+	var response GameResponse
+	if winner > 0 {
+		currentGame.GameOver = true
+		currentGame.Winner = winner
+		response = GameResponse{Success: true, Message: getWinnerMessage(winner), GameState: currentGame, Winner: winner}
+	} else if isBoardFull() {
+		currentGame.GameOver = true
+		currentGame.Winner = 3
+		response = GameResponse{Success: true, Message: "Match nul !", GameState: currentGame, Winner: 3}
+	} else {
+		currentGame.CurrentPlayer = 1
+		response = GameResponse{Success: true, GameState: currentGame}
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
 }
