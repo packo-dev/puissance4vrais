@@ -1,12 +1,12 @@
-# 🎮 Puissance 4 (Connect 4)
-coucou mes petits poulet voici 
+# 🎮 Puissance 4 
+coucou 
 Un jeu de Puissance 4 développé par moiiiiiiiiiiiii ethan 
 
 ## Fonctionnalités
 
 - ✨ **Deux modes de jeu** :
   - 🤝 Deux Joueurs (Joueur contre Joueur)
-  - 🤖 Contre l'Ordinateur (avec IA)
+  - 🤖 Contre l'Ordinateur 
 - 🎯 **Détection automatique des victoires** :
   - Vertical
   - Horizontal
