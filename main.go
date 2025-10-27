@@ -4,7 +4,14 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"math/rand"
+	"time"
 )
+
+// Initialize random seed for AI moves
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 type GameState struct {
 	Board        [6][7]int `json:"board"` // 0=empty, 1=player1, 2=player2
@@ -327,37 +334,54 @@ func aiMove(w http.ResponseWriter, r *http.Request) {
 // Get the best move for the AI
 func getBestMove() int {
 	// First, check if AI can win
-	for col := 0; col < 7; col++ {
-		if isValidMove(col) {
-			if wouldWin(col, 2) {
-				return col
-			}
-		}
+	if col := findWinningMove(2); col != -1 {
+		return col
 	}
 
 	// Then, check if need to block player 1
-	for col := 0; col < 7; col++ {
-		if isValidMove(col) {
-			if wouldWin(col, 1) {
-				return col
-			}
-		}
+	if col := findWinningMove(1); col != -1 {
+		return col
 	}
 
-	// Otherwise, play center if available
+	// Otherwise, prefer center column if available
 	center := 3
 	if isValidMove(center) {
 		return center
 	}
 
-	// Find first valid move
-	for col := 0; col < 7; col++ {
-		if isValidMove(col) {
+	// Find first valid move randomly
+	return findRandomValidMove()
+}
+
+// Find a winning move for the specified player
+func findWinningMove(player int) int {
+	validMoves := getValidMoves()
+	for _, col := range validMoves {
+		if wouldWin(col, player) {
 			return col
 		}
 	}
+	return -1
+}
 
-	return 0
+// Get all valid column moves
+func getValidMoves() []int {
+	var moves []int
+	for col := 0; col < 7; col++ {
+		if isValidMove(col) {
+			moves = append(moves, col)
+		}
+	}
+	return moves
+}
+
+// Find a random valid move
+func findRandomValidMove() int {
+	moves := getValidMoves()
+	if len(moves) == 0 {
+		return 0
+	}
+	return moves[rand.Intn(len(moves))]
 }
 
 // Check if a move is valid (column is not full)
