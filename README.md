@@ -1,6 +1,6 @@
 # 🎮 Puissance 4 
 coucou 
-Un jeu de Puissance 4 développé par moiiiiiiiiiiiii ethan 
+Un jeu de Puissance 4 
 
 ## Fonctionnalités
 
