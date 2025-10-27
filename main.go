@@ -52,6 +52,7 @@ func main() {
 	mux.HandleFunc("/api/game", getGameState)
 	mux.HandleFunc("/api/new-game", newGame)
 	mux.HandleFunc("/api/move", handleMove)
+	mux.HandleFunc("/api/ai-move", aiMove)
 	mux.HandleFunc("/api/check-win", checkWin)
 
 	// Start server
@@ -262,4 +263,131 @@ func getWinnerMessage(winner int) string {
 	default:
 		return ""
 	}
+}
+
+// AI endpoint - plays a move for the computer
+func aiMove(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	if currentGame.Mode != "ai" || currentGame.CurrentPlayer != 2 || currentGame.GameOver {
+		http.Error(w, "Invalid AI move request", http.StatusBadRequest)
+		return
+	}
+
+	// Get best move
+	col := getBestMove()
+	
+	// Place piece
+	row := placePiece(col, 2)
+	
+	if row == -1 {
+		http.Error(w, "AI cannot make a move", http.StatusInternalServerError)
+		return
+	}
+
+	// Check for win
+	winner := checkForWin(row, col)
+	
+	var response GameResponse
+	if winner > 0 {
+		currentGame.GameOver = true
+		currentGame.Winner = winner
+		response = GameResponse{
+			Success:   true,
+			Message:   getWinnerMessage(winner),
+			GameState: currentGame,
+			Winner:    winner,
+		}
+	} else if isBoardFull() {
+		currentGame.GameOver = true
+		currentGame.Winner = 3
+		response = GameResponse{
+			Success:   true,
+			Message:   "Match nul !",
+			GameState: currentGame,
+			Winner:    3,
+		}
+	} else {
+		// Switch back to player 1
+		currentGame.CurrentPlayer = 1
+		response = GameResponse{
+			Success:   true,
+			Message:   "AI move successful",
+			GameState: currentGame,
+		}
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(response)
+}
+
+// Get the best move for the AI
+func getBestMove() int {
+	// First, check if AI can win
+	for col := 0; col < 7; col++ {
+		if isValidMove(col) {
+			if wouldWin(col, 2) {
+				return col
+			}
+		}
+	}
+
+	// Then, check if need to block player 1
+	for col := 0; col < 7; col++ {
+		if isValidMove(col) {
+			if wouldWin(col, 1) {
+				return col
+			}
+		}
+	}
+
+	// Otherwise, play center if available
+	center := 3
+	if isValidMove(center) {
+		return center
+	}
+
+	// Find first valid move
+	for col := 0; col < 7; col++ {
+		if isValidMove(col) {
+			return col
+		}
+	}
+
+	return 0
+}
+
+// Check if a move is valid (column is not full)
+func isValidMove(col int) bool {
+	return col >= 0 && col < 7 && currentGame.Board[0][col] == 0
+}
+
+// Check if placing a piece would result in a win
+func wouldWin(col, player int) bool {
+	// Find the row where the piece would land
+	row := -1
+	for r := 5; r >= 0; r-- {
+		if currentGame.Board[r][col] == 0 {
+			row = r
+			break
+		}
+	}
+	
+	if row == -1 {
+		return false
+	}
+
+	// Temporarily place the piece
+	currentGame.Board[row][col] = player
+	
+	// Check if this creates a win
+	winner := checkForWin(row, col)
+	
+	// Restore the cell
+	currentGame.Board[row][col] = 0
+	
+	return winner == player
 }
